@@ -1,0 +1,64 @@
+<launch>
+
+<arg name="urdf_file" default="$(find xacro)/xacro.py '$(find kobuki_description)/urdf/kobuki_standalone.urdf.xacro'" />
+  <param name="robot_description" command="$(arg urdf_file)" />
+
+<node pkg="robot_state_publisher" type="robot_state_publisher" name="robot_state_publisher">
+    <param name="publish_frequency" type="double" value="5.0" />
+  </node>
+
+  <!-- velocity commands multiplexer -->
+  <node pkg="nodelet" type="nodelet" name="cmd_vel_mux" args="load yocs_cmd_vel_mux/CmdVelMuxNodelet mobile_base_nodelet_manager">
+    <param name="yaml_cfg_file" value="$(find robotic)/param/mux.yaml"/>
+    <remap from="cmd_vel_mux/output" to="mobile_base/commands/velocity"/>
+  </node>
+
+    <!-- Robot velocity smoother -->
+<node pkg="nodelet" type="nodelet" name="velocity_smoother" args="load yocs_velocity_smoother/VelocitySmootherNodelet /mobile_base_nodelet_manager">
+    <rosparam file="$(find turtlebot_bringup)/param/defaults/smoother.yaml" command="load"/>
+    <remap from="velocity_smoother/smooth_cmd_vel" to="/cmd_vel_mux/input/navi"/>
+    <remap from="velocity_smoother/odometry" to="/odom"/>
+    <remap from="velocity_smoother/robot_cmd_vel" to="/mobile_base/commands/velocity"/>
+  </node>
+
+<!-- safety velocity smoother -->
+<node pkg="nodelet" type="nodelet" name="safety_velocity_smoother" args="load yocs_velocity_smoother/VelocitySmootherNodelet /mobile_base_nodelet_manager">
+    
+<rosparam file="$(find kobuki_safety_controller)/include/kobuki_safety_controller/smoother.yaml" command="load"/>
+    <remap from="safety_velocity_smoother/smooth_cmd_vel" to="/cmd_vel_mux/input/safety_controller"/>
+  </node>
+
+
+<!-- Robot safety controller -->
+<node pkg="nodelet" type="nodelet" name="kobuki_safety_controller" args="load kobuki_safety_controller/SafetyControllerNodelet /mobile_base_nodelet_manager">
+	<!-- <remap from="~/disable" to="/mobile_base/events/disable"/> -->
+    <remap from="kobuki_safety_controller/cmd_vel" to="/cmd_vel_mux/input/safety_controller"/> 
+    <!-- <remap from="kobuki_safety_controller/cmd_vel" to="/safety_velocity_smoother/raw_cmd_vel"/> -->
+    <remap from="kobuki_safety_controller/events/bumper" to="/mobile_base/events/bumper"/>
+    <remap from="kobuki_safety_controller/events/cliff" to="/mobile_base/events/cliff"/>
+    <remap from="kobuki_safety_controller/events/wheel_drop" to="/mobile_base/events/wheel_drop"/>
+    <rosparam file="$(find kobuki_safety_controller)/param/param.yaml" command="load"/>
+    <!--
+    <param name="bumper_forward_velocity" value="0.08"/>
+    <param name="bumper_rotated_velocity" value="0.5"/>
+    <param name="time_to_extend_bump_cliff_events" value="2.3"/>
+    <param name="time_to_seperate_bump_cliff_events" value="1.0"/>
+    <param name="amplifier_center" value="1.0"/>
+    <param name="amplifier_right" value="1.0"/>
+    <param name="amplifier_left" value="0.6"/>
+    -->
+  </node>
+
+
+  <node pkg="nodelet" type="nodelet" name="mobile_base_nodelet_manager" args="manager"/>
+
+<!--below argument will overlay publish_tf argument in the base.yaml file-->
+  <arg name="kobuki_publish_tf" value="true"/> 
+  <node pkg="nodelet" type="nodelet" name="mobile_base" args="load kobuki_node/KobukiNodelet mobile_base_nodelet_manager">
+    <rosparam file="$(find kobuki_node)/param/base.yaml" command="load"/>
+    <param name="publish_tf" value="$(arg kobuki_publish_tf)"/>
+    <remap from="mobile_base/odom" to="odom"/>
+    <remap from="mobile_base/joint_states" to="joint_states"/>
+  </node>
+
+</launch>

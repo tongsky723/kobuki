@@ -57,6 +57,10 @@
 #include <kobuki_msgs/BumperEvent.h>
 #include <kobuki_msgs/CliffEvent.h>
 #include <kobuki_msgs/WheelDropEvent.h>
+#include "boost/thread/mutex.hpp"
+#include "boost/thread/thread.hpp"
+#include <dynamic_reconfigure/server.h>
+#include <kobuki_safety_controller/ReactionConfig.h>
 
 namespace kobuki
 {
@@ -88,7 +92,8 @@ public:
     cliff_center_detected_(false),
     cliff_right_detected_(false), 
     last_event_time_(ros::Time(0)),
-    msg_(new geometry_msgs::Twist()){};
+    msg_(new geometry_msgs::Twist()),
+    msg_1(new geometry_msgs::Twist()){};
   ~SafetyController(){};
 
   /**
@@ -98,9 +103,21 @@ public:
   bool init()
   {
     //how long to keep sending messages after a bump, cliff, or wheel drop stops
-    double time_to_extend_bump_cliff_events;
-    nh_.param("time_to_extend_bump_cliff_events", time_to_extend_bump_cliff_events, 0.0);
+    double time_to_extend_bump_cliff_events,time_to_seperate_bump_cliff_events ,vx ,wz ,ac, ar, al;
+    nh_.param("time_to_extend_bump_cliff_events", time_to_extend_bump_cliff_events, 0.5);
+    nh_.param("time_to_seperate_bump_cliff_events", time_to_seperate_bump_cliff_events, 0.35);
+    nh_.param("bumper_forward_velocity", vx, 0.04);
+    nh_.param("bumper_rotated_velocity", wz, 0.4);
+    nh_.param("amplifier_center", ac, 1.5);
+    nh_.param("amplifier_right", ar, 1.0);
+    nh_.param("amplifier_left", al, 0.8);
+    ac_ = ac;
+    ar_ = ar;
+    al_ = al;
+    vx_ = vx;
+    wz_ = wz;
     time_to_extend_bump_cliff_events_ = ros::Duration(time_to_extend_bump_cliff_events);
+    time_to_seperate_bump_cliff_events_ = ros::Duration(time_to_seperate_bump_cliff_events);
     enable_controller_subscriber_ = nh_.subscribe("enable", 10, &SafetyController::enableCB, this);
     disable_controller_subscriber_ = nh_.subscribe("disable", 10, &SafetyController::disableCB, this);
     bumper_event_subscriber_ = nh_.subscribe("events/bumper", 10, &SafetyController::bumperEventCB, this);
@@ -108,6 +125,10 @@ public:
     wheel_event_subscriber_  = nh_.subscribe("events/wheel_drop", 10, &SafetyController::wheelEventCB, this);
     reset_safety_states_subscriber_ = nh_.subscribe("reset", 10, &SafetyController::resetSafetyStatesCB, this);
     velocity_command_publisher_ = nh_.advertise< geometry_msgs::Twist >("cmd_vel", 10);
+    dynamic_reconfigure::Server<kobuki_safety_controller::ReactionConfig> *dsrv_;
+    dsrv_ = new dynamic_reconfigure::Server<kobuki_safety_controller::ReactionConfig>(nh_);
+    dynamic_reconfigure::Server<kobuki_safety_controller::ReactionConfig>::CallbackType cb = boost::bind(&SafetyController::callback, this, _1, _2);
+    dsrv_->setCallback(cb); 
     return true;
   };
 
@@ -124,17 +145,21 @@ private:
   ros::Subscriber reset_safety_states_subscriber_;
   ros::Publisher controller_state_publisher_, velocity_command_publisher_;
   bool wheel_left_dropped_, wheel_right_dropped_;
-  bool bumper_left_pressed_, bumper_center_pressed_, bumper_right_pressed_;
+  bool bumper_left_pressed_, bumper_center_pressed_, bumper_right_pressed_, bumper_centerR_pressed_;
   bool cliff_left_detected_, cliff_center_detected_, cliff_right_detected_;
-  ros::Duration time_to_extend_bump_cliff_events_;
+  double vx_, wz_, ac_, ar_, al_;
+  boost::mutex publish_mutex_;
+  ros::Duration time_to_extend_bump_cliff_events_ , time_to_seperate_bump_cliff_events_;
   ros::Time last_event_time_;
 
   geometry_msgs::TwistPtr msg_; // velocity command
-
+  geometry_msgs::TwistPtr msg_1; 
   /**
    * @brief ROS logging output for enabling the controller
    * @param msg incoming topic message
    */
+  void callback(kobuki_safety_controller::ReactionConfig &config, uint32_t level) ;
+
   void enableCB(const std_msgs::EmptyConstPtr msg);
 
   /**
@@ -172,6 +197,18 @@ private:
   void resetSafetyStatesCB(const std_msgs::EmptyConstPtr msg);
 };
 
+
+void SafetyController::callback(kobuki_safety_controller::ReactionConfig &config, uint32_t level)  
+{  
+  printf("reaction parameters reconfigure request received!\n");
+  vx_ = config.bumper_forward_velocity;
+  wz_ = config.bumper_rotated_velocity;
+  ac_ = config.groups.vel_amplifier.amplifier_center;
+  ar_ = config.groups.vel_amplifier.amplifier_right;
+  al_ = config.groups.vel_amplifier.amplifier_left;
+  time_to_extend_bump_cliff_events_ = ros::Duration(config.time_to_extend_bump_cliff_events);
+  time_to_seperate_bump_cliff_events_ = ros::Duration(config.time_to_seperate_bump_cliff_events);
+};  
 
 void SafetyController::enableCB(const std_msgs::EmptyConstPtr msg)
 {
@@ -227,22 +264,24 @@ void SafetyController::bumperEventCB(const kobuki_msgs::BumperEventConstPtr msg)
   if (msg->state == kobuki_msgs::BumperEvent::PRESSED)
   {
     last_event_time_ = ros::Time::now();
-    ROS_DEBUG_STREAM("Bumper pressed. Moving backwards. [" << name_ << "]");
+    ROS_INFO_STREAM("Bumper pressed. Moving backwards. [" << name_ << "]");
     switch (msg->bumper)
     {
       case kobuki_msgs::BumperEvent::LEFT:    bumper_left_pressed_   = true;  break;
       case kobuki_msgs::BumperEvent::CENTER:  bumper_center_pressed_ = true;  break;
       case kobuki_msgs::BumperEvent::RIGHT:   bumper_right_pressed_  = true;  break;
+      // case kobuki_msgs::BumperEvent::CENTERR:   bumper_centerR_pressed_  = true;  break;
     }
   }
   else // kobuki_msgs::BumperEvent::RELEASED
   {
-    ROS_DEBUG_STREAM("No bumper pressed. Resuming normal operation. [" << name_ << "]");
+    ROS_INFO_STREAM("No bumper pressed. Resuming normal operation. [" << name_ << "]");
     switch (msg->bumper)
     {
       case kobuki_msgs::BumperEvent::LEFT:    bumper_left_pressed_   = false; break;
       case kobuki_msgs::BumperEvent::CENTER:  bumper_center_pressed_ = false; break;
       case kobuki_msgs::BumperEvent::RIGHT:   bumper_right_pressed_  = false; break;
+      // case kobuki_msgs::BumperEvent::CENTERR: bumper_centerR_pressed_  = false;  break;
     }
   }
 };
@@ -289,10 +328,12 @@ void SafetyController::resetSafetyStatesCB(const std_msgs::EmptyConstPtr msg)
   wheel_right_dropped_   = false;
   bumper_left_pressed_   = false;
   bumper_center_pressed_ = false;
+  // bumper_centerR_pressed_ = false;
   bumper_right_pressed_  = false;
   cliff_left_detected_   = false;
   cliff_center_detected_ = false;
   cliff_right_detected_  = false;
+  
   ROS_WARN_STREAM("All safety states have been reset to false. [" << name_ << "]");
 }
 
@@ -300,8 +341,10 @@ void SafetyController::spin()
 {
   if (this->getState())
   {
+    boost::mutex::scoped_lock lock(publish_mutex_);
     if (wheel_left_dropped_ || wheel_right_dropped_)
     {
+      ROS_INFO_THROTTLE(1, "wheel drop");
       msg_.reset(new geometry_msgs::Twist());
       msg_->linear.x = 0.0;
       msg_->linear.y = 0.0;
@@ -310,46 +353,108 @@ void SafetyController::spin()
       msg_->angular.y = 0.0;
       msg_->angular.z = 0.0;
       velocity_command_publisher_.publish(msg_);
+      msg_1.reset(new geometry_msgs::Twist());
+      msg_1->linear.x = 0.0;
+      msg_1->linear.y = 0.0;
+      msg_1->linear.z = 0.0;
+      msg_1->angular.x = 0.0;
+      msg_1->angular.y = 0.0;
+      msg_1->angular.z = 0.0;
     }
-    else if (bumper_center_pressed_ || cliff_center_detected_)
+    else if (bumper_center_pressed_ || bumper_left_pressed_ || cliff_center_detected_ )
     {
+      ROS_INFO_THROTTLE(1, "bumper center/left %d/%d/%d", bumper_center_pressed_, bumper_left_pressed_, cliff_center_detected_);
       msg_.reset(new geometry_msgs::Twist());
-      msg_->linear.x = -0.1;
+      msg_->linear.x = -vx_;
       msg_->linear.y = 0.0;
       msg_->linear.z = 0.0;
       msg_->angular.x = 0.0;
       msg_->angular.y = 0.0;
       msg_->angular.z = 0.0;
       velocity_command_publisher_.publish(msg_);
+      msg_1.reset(new geometry_msgs::Twist());
+      msg_1->linear.x = 0.0;
+      msg_1->linear.y = 0.0;
+      msg_1->linear.z = 0.0;
+      msg_1->angular.x = 0.0;
+      msg_1->angular.y = 0.0;
+      msg_1->angular.z = 2 * wz_ * ac_;    
     }
-    else if (bumper_left_pressed_ || cliff_left_detected_)
+    /*
+    else if (bumper_centerR_pressed_ )
     {
       // left bump/cliff; also spin a bit to the right to make escape easier
       msg_.reset(new geometry_msgs::Twist());
-      msg_->linear.x = -0.1;
+      msg_->linear.x = -vx_;
       msg_->linear.y = 0.0;
       msg_->linear.z = 0.0;
       msg_->angular.x = 0.0;
       msg_->angular.y = 0.0;
-      msg_->angular.z = -0.4;
+      msg_->angular.z = 0.0;
       velocity_command_publisher_.publish(msg_);
+      msg_1.reset(new geometry_msgs::Twist());
+      msg_1->linear.x = 0.0;
+      msg_1->linear.y = 0.0;
+      msg_1->linear.z = 0.0;
+      msg_1->angular.x = 0.0;
+      msg_1->angular.y = 0.0;
+      msg_1->angular.z = 0.0; 
+    }
+    */
+    else if (cliff_left_detected_)
+    {
+      // left bump/cliff; also spin a bit to the right to make escape easier
+      ROS_INFO_THROTTLE(1, "cliff left");
+      msg_.reset(new geometry_msgs::Twist());
+      msg_->linear.x = -vx_;
+      msg_->linear.y = 0.0;
+      msg_->linear.z = 0.0;
+      msg_->angular.x = 0.0;
+      msg_->angular.y = 0.0;
+      msg_->angular.z = 0.0;
+      velocity_command_publisher_.publish(msg_);
+      msg_1.reset(new geometry_msgs::Twist());
+      msg_1->linear.x = 0.0;
+      msg_1->linear.y = 0.0;
+      msg_1->linear.z = 0.0;
+      msg_1->angular.x = 0.0;
+      msg_1->angular.y = 0.0;
+      msg_1->angular.z = -wz_ * al_; 
     }
     else if (bumper_right_pressed_ || cliff_right_detected_)
     {
       // right bump/cliff; also spin a bit to the left to make escape easier
+      ROS_INFO_THROTTLE(1, "bumper right");
       msg_.reset(new geometry_msgs::Twist());
-      msg_->linear.x = -0.1;
+      msg_->linear.x = -vx_;
       msg_->linear.y = 0.0;
       msg_->linear.z = 0.0;
       msg_->angular.x = 0.0;
       msg_->angular.y = 0.0;
-      msg_->angular.z = 0.4;
+      msg_->angular.z = 0.0;
       velocity_command_publisher_.publish(msg_);
+      msg_1.reset(new geometry_msgs::Twist());
+      msg_1->linear.x = 0.0;
+      msg_1->linear.y = 0.0;
+      msg_1->linear.z = 0.0;
+      msg_1->angular.x = 0.0;
+      msg_1->angular.y = 0.0;
+      msg_1->angular.z = wz_ * ar_; 
     }
     //if we want to extend the safety state and we're within the time, just keep sending msg_
     else if (time_to_extend_bump_cliff_events_ > ros::Duration(1e-10) && 
-	     ros::Time::now() - last_event_time_ < time_to_extend_bump_cliff_events_) {
-      velocity_command_publisher_.publish(msg_);
+	     ros::Time::now() - last_event_time_ < time_to_extend_bump_cliff_events_) 
+    {
+      	if ((ros::Time::now() - last_event_time_ ) < time_to_seperate_bump_cliff_events_)
+        {
+        ROS_INFO_THROTTLE(1, "within 1st interval");
+          velocity_command_publisher_.publish(msg_);
+        }
+        else
+        {
+          ROS_INFO_THROTTLE(1, "within 2nd interval");
+          velocity_command_publisher_.publish(msg_1);
+        }
     }
   }
 };

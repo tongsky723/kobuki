@@ -1,0 +1,12 @@
+\subsubsection parameters ROS parameters
+
+Reads and maintains the following parameters on the ROS server
+
+- \b "~time_to_extend_bump_cliff_events" : \b [double] total time to react safety sensors min: 0.0, default: 2.0, max: inf
+- \b "~time_to_seperate_bump_cliff_events" : \b [double] first interval time to react safety sensors backward behavior min: 0.0, default: 1.0, max: inf
+- \b "~bumper_forward_velocity" : \b [double] backward velocity [m/s], (already set negative sign in source code) min: -inf, default: 0.08, max: inf
+- \b "~bumper_rotated_velocity" : \b [double] rotation velocity [rad/s] min: -6.28318530718, default: 0.5, max: 6.28318530718
+- \b "~amplifier_center" : \b [double] The amplifier of center reactive velocity min: -inf, default: 1.0, max: inf
+- \b "~amplifier_right" : \b [double] The amplifier of right reactive velocity min: -inf, default: 1.0, max: inf
+- \b "~amplifier_left" : \b [double] The amplifier of left reactive velocity min: -inf, default: 0.6, max: inf
+

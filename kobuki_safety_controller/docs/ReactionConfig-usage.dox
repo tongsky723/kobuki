@@ -1,0 +1,13 @@
+\subsubsection usage Usage
+\verbatim
+<node name="safety_dynamic_param" pkg="kobuki_safety_controller" type="safety_dynamic_param">
+  <param name="time_to_extend_bump_cliff_events" type="double" value="2.0" />
+  <param name="time_to_seperate_bump_cliff_events" type="double" value="1.0" />
+  <param name="bumper_forward_velocity" type="double" value="0.08" />
+  <param name="bumper_rotated_velocity" type="double" value="0.5" />
+  <param name="amplifier_center" type="double" value="1.0" />
+  <param name="amplifier_right" type="double" value="1.0" />
+  <param name="amplifier_left" type="double" value="0.6" />
+</node>
+\endverbatim
+

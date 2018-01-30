@@ -1,0 +1,7 @@
+time_to_extend_bump_cliff_events: 1.7
+time_to_seperate_bump_cliff_events: 1.0
+bumper_forward_velocity: 0.08
+bumper_rotated_velocity: 0.5
+amplifier_center: 1.0
+amplifier_right: 1.0
+amplifier_left: 0.5

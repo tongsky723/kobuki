@@ -1,0 +1,48 @@
+<!-- Launches Kobuki Gazebo simulation in an customed world -->
+<launch>
+  <!-- start Gazebo with an empty world -->
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="use_sim_time" value="true"/>
+    <arg name="debug" value="false"/>
+    <arg name="world_name" value="$(find kobuki_gazebo)/worlds/corridor.world"/>
+  </include>
+  
+  <!-- spawn the robot -->
+  <include file="$(find kobuki_gazebo)/launch/includes/robot.launch.xml"/>
+
+  <!-- velocity multiplexer-->
+  <node pkg="nodelet" type="nodelet" name="cmd_vel_mux"
+        args="load yocs_cmd_vel_mux/CmdVelMuxNodelet mobile_base_nodelet_manager">
+    <param name="yaml_cfg_file" value="$(find turtlebot_bringup)/param/mux.yaml" />
+    <remap from="cmd_vel_mux/output" to="mobile_base/commands/velocity"/>
+  </node>
+
+  <!-- Robot velocity smoother -->
+<node pkg="nodelet" type="nodelet" name="velocity_smoother" args="load yocs_velocity_smoother/VelocitySmootherNodelet /mobile_base_nodelet_manager">
+    <rosparam file="$(find turtlebot_bringup)/param/defaults/smoother.yaml" command="load"/>
+    <remap from="velocity_smoother/smooth_cmd_vel" to="/cmd_vel_mux/input/navi"/>
+    <remap from="velocity_smoother/odometry" to="/odom"/>
+    <remap from="velocity_smoother/robot_cmd_vel" to="/mobile_base/commands/velocity"/>
+</node>
+
+<!-- safety velocity smoother -->
+<node pkg="nodelet" type="nodelet" name="safety_velocity_smoother" args="load yocs_velocity_smoother/VelocitySmootherNodelet /mobile_base_nodelet_manager">
+    <rosparam file="$(find kobuki_safety_controller)/include/kobuki_safety_controller/smoother.yaml" command="load"/>
+    <remap from="safety_velocity_smoother/smooth_cmd_vel" to="/cmd_vel_mux/input/safety_controller"/>
+</node>
+
+
+<!-- Robot safety controller -->
+<node pkg="nodelet" type="nodelet" name="kobuki_safety_controller" args="load kobuki_safety_controller/SafetyControllerNodelet /mobile_base_nodelet_manager">
+    <remap from="kobuki_safety_controller/cmd_vel" to="/cmd_vel_mux/input/safety_controller"/> 
+    <!-- <remap from="kobuki_safety_controller/cmd_vel" to="/safety_velocity_smoother/raw_cmd_vel"/> -->
+    <remap from="kobuki_safety_controller/events/bumper" to="/mobile_base/events/bumper"/>
+    <remap from="kobuki_safety_controller/events/cliff" to="/mobile_base/events/cliff"/>
+    <remap from="kobuki_safety_controller/events/wheel_drop" to="/mobile_base/events/wheel_drop"/>
+    <param name="bumper_forward_velocity" value="0.15"/>
+    <param name="bumper_rotated_velocity" value="0.8"/>
+    <param name="time_to_extend_bump_cliff_events" value="0.7"/>
+    <param name="time_to_seperate_bump_cliff_events" value="0.45"/>
+</node>
+
+</launch>
